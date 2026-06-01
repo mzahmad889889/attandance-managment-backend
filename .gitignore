@@ -1,0 +1,16 @@
+# Python cache directories
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+
+# Flask / environment files
+instance/
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
