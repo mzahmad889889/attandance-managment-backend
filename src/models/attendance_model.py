@@ -1,5 +1,6 @@
 from src.extention import db
 from datetime import datetime, date, time
+import math
 
 class AttendanceRecord(db.Model):
     __tablename__ = 'attendance'
@@ -24,7 +25,12 @@ class AttendanceRecord(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def calculate_hours(self):
-        """Calculate total and overtime hours based on shift (12hr shifts: Day 07:00-19:00, Night 19:00-07:00)"""
+        """Calculate total and overtime hours based on shift (12hr shifts: Day 07:00-19:00, Night 19:00-07:00).
+
+        Overtime rounding policy:
+        - If overtime < 0.5 hours (30 minutes) => count as 0
+        - If overtime >= 0.5 hours => round up to the next whole hour (ceil)
+        """
         if self.checkin_time and self.checkout_time:
             from datetime import datetime, timedelta
             # Convert times to datetime for arithmetic
@@ -38,7 +44,12 @@ class AttendanceRecord(db.Model):
 
             # Shift duration is 12 hours standard
             standard_hours = 12.0
-            self.overtime_hours = round(max(0, total - standard_hours), 2)
+            raw_overtime = max(0.0, total - standard_hours)
+            # Apply rounding policy: <0.5h -> 0, otherwise ceil to next hour
+            if raw_overtime < 0.5:
+                self.overtime_hours = 0
+            else:
+                self.overtime_hours = int(math.ceil(raw_overtime))
 
     def to_dict(self):
         w = self.worker

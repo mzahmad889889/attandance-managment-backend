@@ -1,0 +1,28 @@
+# Production dependencies (slimmed from requriment.txt — only what the code imports)
+Flask
+Flask-Cors
+Flask-JWT-Extended
+Flask-SQLAlchemy
+SQLAlchemy
+PyMySQL
+bcrypt
+Werkzeug
+python-dotenv
+gunicorn
+cryptography
+
+# Face recognition (InsightFace on CPU)
+numpy<2
+opencv-python-headless
+insightface
+onnxruntime
+
+# Reports / Excel export
+pandas
+openpyxl
+xlsxwriter
+Pillow
+
+# Misc
+requests
+python-dateutil

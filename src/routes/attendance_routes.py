@@ -85,13 +85,13 @@ def manual_checkin():
         return jsonify({'error': 'Worker not found'}), 404
 
     today = date.today()
-    record = AttendanceRecord.query.filter_by(worker_id=worker.id, date=today).first()
+    record = AttendanceRecord.query.filter_by(worker_id=worker.id, date=today).order_by(AttendanceRecord.id.desc()).first()
 
     if record and record.live_status == 'IN':
         return jsonify({'error': 'Already checked in', 'record': record.to_dict()}), 409
 
     now = datetime.now().time()
-    if not record:
+    if not record or record.live_status == 'OUT':
         record = AttendanceRecord(
             worker_id=worker.id,
             date=today,
@@ -126,9 +126,9 @@ def manual_checkout():
         return jsonify({'error': 'Worker not found'}), 404
 
     today = date.today()
-    record = AttendanceRecord.query.filter_by(worker_id=worker.id, date=today).first()
+    record = AttendanceRecord.query.filter_by(worker_id=worker.id, date=today, live_status='IN').order_by(AttendanceRecord.id.desc()).first()
 
-    if not record or record.live_status != 'IN':
+    if not record:
         return jsonify({'error': 'Worker not checked in'}), 409
 
     now = datetime.now().time()

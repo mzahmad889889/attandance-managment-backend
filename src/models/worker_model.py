@@ -14,7 +14,7 @@ class Worker(db.Model):
     face_embedding = db.Column(db.Text)      # JSON-encoded list of floats
 
     # Shift info: Day/Night/Rest cycle
-    shift_type = db.Column(db.Enum('Day', 'Night', 'Rest'), default='Day')
+    shift_type = db.Column(db.Enum('Day', 'Night', 'Rest'), default='Day', nullable=True)
     shift_start_date = db.Column(db.Date)   # when current shift cycle started
 
     plant_id = db.Column(db.Integer, db.ForeignKey('plants.id'), nullable=False)
@@ -55,7 +55,7 @@ class Worker(db.Model):
             from src.models.attendance_model import AttendanceRecord
             from datetime import date
             today = date.today()
-            att = AttendanceRecord.query.filter_by(worker_id=self.id, date=today).first()
+            att = AttendanceRecord.query.filter_by(worker_id=self.id, date=today).order_by(AttendanceRecord.id.desc()).first()
             if att:
                 d['live_status'] = att.live_status
                 d['checkin_time'] = att.checkin_time.strftime('%H:%M') if att.checkin_time else None

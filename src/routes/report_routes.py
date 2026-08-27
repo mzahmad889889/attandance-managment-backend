@@ -25,6 +25,7 @@ def export_excel():
     date_to_str = request.args.get('date_to')
     plant_id = request.args.get('plant_id', type=int)
     contractor_id = request.args.get('contractor_id', type=int)
+    shift = request.args.get('shift')
 
     # Default: current month
     today = date.today()
@@ -53,26 +54,36 @@ def export_excel():
         q = q.filter(Worker.plant_id == plant_id)
     if contractor_id:
         q = q.filter(Worker.contractor_id == contractor_id)
+    if shift:
+        q = q.filter(AttendanceRecord.shift_type == shift)
 
-    records = q.order_by(AttendanceRecord.date, Worker.name).all()
+    records = q.order_by(AttendanceRecord.date, Worker.name, AttendanceRecord.id).all()
 
     rows = []
+    grouped_records = {}
     for r in records:
-        w = r.worker
-        rows.append({
-            'Date': r.date.isoformat() if r.date else '',
-            'Worker Code': w.worker_code if w else '',
-            'Name': w.name if w else '',
-            'Plant': w.plant.name if w and w.plant else '',
-            'Contractor': w.contractor.name if w and w.contractor else '',
-            'Shift': r.shift_type or '',
-            'Check In': r.checkin_time.strftime('%H:%M') if r.checkin_time else '',
-            'Check Out': r.checkout_time.strftime('%H:%M') if r.checkout_time else '',
-            'Total Hours': r.total_hours or 0,
-            'Overtime Hours': r.overtime_hours or 0,
-            'Status': r.status or '',
-            'Live Status': r.live_status or '',
-        })
+        key = (r.worker_id, r.date.isoformat() if r.date else '')
+        grouped_records.setdefault(key, []).append(r)
+
+    for key, grouped in grouped_records.items():
+        worker_id, date_key = key
+        for entry_no, r in enumerate(grouped, start=1):
+            w = r.worker
+            rows.append({
+                'Entry #': entry_no,
+                'Date': r.date.isoformat() if r.date else '',
+                'Worker Code': w.worker_code if w else '',
+                'Name': w.name if w else '',
+                'Plant': w.plant.name if w and w.plant else '',
+                'Contractor': w.contractor.name if w and w.contractor else '',
+                'Shift': r.shift_type or '',
+                'Check In': r.checkin_time.strftime('%H:%M') if r.checkin_time else '',
+                'Check Out': r.checkout_time.strftime('%H:%M') if r.checkout_time else '',
+                'Total Hours': r.total_hours or 0,
+                'Overtime Hours': r.overtime_hours or 0,
+                'Status': r.status or '',
+                'Live Status': r.live_status or '',
+            })
 
     df = pd.DataFrame(rows)
 
@@ -158,12 +169,22 @@ def summary():
 @report_bp.route('/worker/<int:worker_id>/history', methods=['GET'])
 @jwt_required()
 def worker_history(worker_id):
-    """Fetch 1 month history for a specific worker."""
-    limit = date.today() - timedelta(days=30)
-    records = AttendanceRecord.query.filter(
-        AttendanceRecord.worker_id == worker_id,
-        AttendanceRecord.date >= limit
-    ).order_by(AttendanceRecord.date.desc()).all()
+    """Fetch worker history. By default last 30 days; pass ?all=1 to fetch entire history.
+    Optionally pass days=<n> to fetch last n days."""
+    all_flag = request.args.get('all')
+    days_param = request.args.get('days', type=int)
+
+    if all_flag and all_flag.lower() in ('1','true','yes'):
+        records = AttendanceRecord.query.filter(AttendanceRecord.worker_id == worker_id).order_by(AttendanceRecord.date.desc()).all()
+    else:
+        if days_param and days_param > 0:
+            limit = date.today() - timedelta(days=days_param)
+        else:
+            limit = date.today() - timedelta(days=30)
+        records = AttendanceRecord.query.filter(
+            AttendanceRecord.worker_id == worker_id,
+            AttendanceRecord.date >= limit
+        ).order_by(AttendanceRecord.date.desc()).all()
     
     return jsonify({
         'history': [r.to_dict() for r in records]
@@ -184,11 +205,13 @@ def export_worker_excel(worker_id):
     records = AttendanceRecord.query.filter(
         AttendanceRecord.worker_id == worker_id,
         AttendanceRecord.date >= limit
-    ).order_by(AttendanceRecord.date.asc()).all()
+    ).order_by(AttendanceRecord.date.asc(), AttendanceRecord.id.asc()).all()
     
     rows = []
-    for r in records:
+    # Add an entry counter to show repeated entries clearly
+    for idx, r in enumerate(records, start=1):
         rows.append({
+            'Entry #': idx,
             'Date': r.date.isoformat(),
             'Shift': r.shift_type,
             'In': r.checkin_time.strftime('%H:%M') if r.checkin_time else '',

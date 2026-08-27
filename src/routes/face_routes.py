@@ -227,10 +227,10 @@ def recognize():
 
     # Create/Update attendance record
     today = date.today()
-    record = AttendanceRecord.query.filter_by(worker_id=best_worker.id, date=today).first()
     now_time = datetime.now().time()
 
     if mode == 'checkin':
+        record = AttendanceRecord.query.filter_by(worker_id=best_worker.id, date=today).order_by(AttendanceRecord.id.desc()).first()
         if record and record.live_status == 'IN':
             return jsonify({
                 'match': True,
@@ -240,25 +240,20 @@ def recognize():
                 'record': record.to_dict()
             }), 200
 
-        if not record:
-            record = AttendanceRecord(
-                worker_id=best_worker.id,
-                date=today,
-                shift_type=best_worker.shift_type,
-                checkin_time=now_time,
-                checkin_photo=snapshot_path,
-                live_status='IN',
-                status='Present',
-            )
-            db.session.add(record)
-        else:
-            record.checkin_time = now_time
-            record.checkin_photo = snapshot_path
-            record.live_status = 'IN'
-            record.status = 'Present'
+        record = AttendanceRecord(
+            worker_id=best_worker.id,
+            date=today,
+            shift_type=best_worker.shift_type,
+            checkin_time=now_time,
+            checkin_photo=snapshot_path,
+            live_status='IN',
+            status='Present',
+        )
+        db.session.add(record)
 
     elif mode == 'checkout':
-        if not record or record.live_status != 'IN':
+        record = AttendanceRecord.query.filter_by(worker_id=best_worker.id, date=today, live_status='IN').order_by(AttendanceRecord.id.desc()).first()
+        if not record:
             return jsonify({
                 'match': True,
                 'not_checked_in': True,
