@@ -54,18 +54,49 @@ def create_app():
 
     @app.route('/api/health')
     def health():
-        """Unauthenticated liveness probe — confirms the API and its database are up."""
+        """Unauthenticated probe reporting API and database state.
+
+        Also completes the schema setup if it could not run at startup, so the app
+        recovers on its own once the database becomes reachable.
+        """
         try:
             db.session.execute(db.text('SELECT 1'))
-            return {'status': 'ok', 'database': 'connected'}
         except Exception as exc:
-            return {'status': 'degraded', 'database': str(exc)}, 503
+            return {
+                'status': 'degraded',
+                'database': f'{type(exc).__name__}: {exc}',
+                'startup_error': app.config.get('DB_INIT_ERROR'),
+            }, 503
+
+        if app.config.get('DB_INIT_ERROR'):
+            _init_database(app)
+        if app.config.get('DB_INIT_ERROR'):
+            return {'status': 'degraded', 'database': 'connected',
+                    'startup_error': app.config['DB_INIT_ERROR']}, 503
+        return {'status': 'ok', 'database': 'connected'}
 
     with app.app_context():
-        db.create_all()
-        _seed_initial_data()
+        _init_database(app)
 
     return app
+
+
+def _init_database(app):
+    """Create tables and seed reference data, recording failure instead of raising.
+
+    Letting this raise would abort the import and take down the whole container, so
+    an unreachable database becomes an unreachable API and the real error is visible
+    only in container logs. Recording it keeps the app serving and lets /api/health
+    report the cause.
+    """
+    try:
+        db.create_all()
+        _seed_initial_data()
+        app.config['DB_INIT_ERROR'] = None
+    except Exception as exc:
+        app.config['DB_INIT_ERROR'] = f'{type(exc).__name__}: {exc}'
+        app.logger.error('[STARTUP] Database initialisation failed: %s', exc)
+        db.session.rollback()
 
 
 def _seed_initial_data():
