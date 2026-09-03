@@ -1,30 +1,41 @@
 """TLS settings for the MySQL connection.
 
-The managed MySQL runs with ``--require_secure_transport=ON``, so PyMySQL has to
-negotiate TLS or the server rejects the connection outright with error 3159,
-"Connections using insecure transport are prohibited". PyMySQL only attempts TLS
-when an ssl parameter is passed, so we hand it an explicit context.
+DB_SSL selects how PyMySQL treats transport security:
 
-Certificate verification is off: MySQL presents its own auto-generated self-signed
-certificate, which no CA can vouch for. The connection is still encrypted, which is
-what require_secure_transport asks for, and it never leaves the host's private
-Docker network.
+  auto (default)  Negotiate TLS when the server offers it, plaintext otherwise.
+                  This is PyMySQL's own behaviour and the right choice for a
+                  correctly configured server, whichever way it is set up.
+  required        Demand TLS, failing if the server does not offer it. Use when
+                  the server runs with --require_secure_transport=ON. Certificate
+                  verification is off, since MySQL presents a self-signed
+                  certificate no CA can vouch for; the link is still encrypted and
+                  never leaves the host's private Docker network.
+  off             Force plaintext.
 
-Set DB_SSL=off for a local MySQL that does not speak TLS.
+'required' is deliberately not the default. A server that demands secure transport
+but does not advertise TLS support cannot be reached at all, and in that state
+'required' turns the server's own error into a client-side one, which is harder to
+read. Let the server speak for itself.
 """
 import os
 import ssl
 
-_OFF = ('off', 'false', '0', 'no')
+_OFF = ('off', 'false', '0', 'no', 'disabled')
+_REQUIRED = ('required', 'require', 'on', 'true', '1', 'yes')
 
 
 def connect_args():
     """DBAPI connect arguments for the configured database."""
-    if os.environ.get('DB_SSL', 'on').strip().lower() in _OFF:
-        return {}
+    mode = os.environ.get('DB_SSL', 'auto').strip().lower()
 
-    ctx = ssl.create_default_context()
-    # check_hostname must be cleared before verify_mode, or Python rejects the change.
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return {'ssl': ctx}
+    if mode in _OFF:
+        return {'ssl_disabled': True}
+
+    if mode in _REQUIRED:
+        ctx = ssl.create_default_context()
+        # check_hostname must be cleared before verify_mode, or Python rejects the change.
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return {'ssl': ctx}
+
+    return {}
