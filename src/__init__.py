@@ -2,6 +2,7 @@ from flask import Flask
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from src.extention import db
+from src.db_ssl import connect_args
 import os
 
 def create_app():
@@ -13,6 +14,12 @@ def create_app():
         "mysql+pymysql://root:@localhost/attandance_management_system"
     )
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'connect_args': connect_args(),
+        # The database is a separate container that can restart under us; without this
+        # the first query on a stale pooled connection fails instead of reconnecting.
+        'pool_pre_ping': True,
+    }
     app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET', 'super-secret-jwt-key-change-in-production')
     app.config['JWT_ACCESS_TOKEN_EXPIRES'] = 86400  # 24 hours
     app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload

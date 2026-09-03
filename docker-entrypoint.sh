@@ -4,11 +4,12 @@ set -e
 python - <<'EOF'
 import os, time, sys
 from sqlalchemy import create_engine, text
+from src.db_ssl import connect_args
 
 url = os.environ.get("DATABASE_URL", "mysql+pymysql://root:@localhost/attandance_management_system")
 for attempt in range(30):
     try:
-        engine = create_engine(url)
+        engine = create_engine(url, connect_args=connect_args())
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         print("[ENTRYPOINT] Database is reachable.")
