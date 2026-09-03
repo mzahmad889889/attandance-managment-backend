@@ -25,7 +25,7 @@ print("[ENTRYPOINT] Database never became reachable.", file=sys.stderr)
 sys.exit(1)
 EOF
 
-# Each worker loads its own copy of the InsightFace model, so worker count drives
-# memory use more than anything else here. Default to one; raise WEB_CONCURRENCY
-# only on a host with headroom to spare.
-exec gunicorn -w "${WEB_CONCURRENCY:-1}" -b 0.0.0.0:5000 --timeout 300 app:app
+# Worker class, thread count, timeouts and the face-model warm-up live in gunicorn.conf.py.
+# Each worker process loads its own copy of the InsightFace model, so raise WEB_CONCURRENCY
+# only on a host with memory to spare; WEB_THREADS is the cheap way to add concurrency.
+exec gunicorn -c gunicorn.conf.py app:app

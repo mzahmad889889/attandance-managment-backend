@@ -7,7 +7,7 @@ from flask_jwt_extended import jwt_required
 from src.extention import db
 from src.models.worker_model import Worker
 from src.models.attendance_model import AttendanceRecord
-import os, base64, json
+import os, base64, json, threading
 import numpy as np
 from datetime import date, datetime
 
@@ -20,33 +20,49 @@ os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 # ---------- AI Engine Init ----------
 _face_engine = None
 _use_insightface = False
+# The server handles requests on several threads now. Loading guards against two threads
+# each building a model; inference is serialised because one frame already saturates the
+# CPU, and running two at once only makes both slower while starving other requests.
+_load_lock = threading.Lock()
+_infer_lock = threading.Lock()
 
 def _get_engine():
     global _face_engine, _use_insightface
     if _face_engine is not None:
         return _face_engine, _use_insightface
 
-    try:
-        import insightface
-        from insightface.app import FaceAnalysis
-        app = FaceAnalysis(name='buffalo_sc', providers=['CPUExecutionProvider'])
-        app.prepare(ctx_id=0, det_size=(320, 320))
-        _face_engine = app
-        _use_insightface = True
-        print("[FACE] Using InsightFace engine")
-        return _face_engine, _use_insightface
-    except Exception as e:
-        print(f"[FACE] InsightFace not available ({e}), trying DeepFace...")
+    with _load_lock:
+        if _face_engine is not None:
+            return _face_engine, _use_insightface
 
-    try:
-        from deepface import DeepFace
-        _face_engine = DeepFace
-        _use_insightface = False
-        print("[FACE] Using DeepFace engine")
-        return _face_engine, _use_insightface
-    except Exception as e:
-        print(f"[FACE] DeepFace also failed ({e}). Face recognition unavailable.")
-        return None, False
+        try:
+            import insightface
+            from insightface.app import FaceAnalysis
+            app = FaceAnalysis(name='buffalo_sc', providers=['CPUExecutionProvider'])
+            app.prepare(ctx_id=0, det_size=(320, 320))
+            _face_engine = app
+            _use_insightface = True
+            print("[FACE] Using InsightFace engine")
+            return _face_engine, _use_insightface
+        except Exception as e:
+            print(f"[FACE] InsightFace not available ({e}), trying DeepFace...")
+
+        try:
+            from deepface import DeepFace
+            _face_engine = DeepFace
+            _use_insightface = False
+            print("[FACE] Using DeepFace engine")
+            return _face_engine, _use_insightface
+        except Exception as e:
+            print(f"[FACE] DeepFace also failed ({e}). Face recognition unavailable.")
+            return None, False
+
+
+def warm_engine():
+    """Load the model ahead of the first request (gunicorn calls this after each worker starts)."""
+    engine, use_insight = _get_engine()
+    kind = 'insightface' if use_insight else ('deepface' if engine else 'none')
+    print(f"[FACE] Warm-up finished: engine={kind}")
 
 
 def _b64_to_np(b64_str):
@@ -67,7 +83,8 @@ def _extract_embedding(img_np):
         return None
 
     if use_insight:
-        faces = engine.get(img_np)
+        with _infer_lock:
+            faces = engine.get(img_np)
         if not faces:
             return None
         return faces[0].embedding.tolist()

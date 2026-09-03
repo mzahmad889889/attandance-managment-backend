@@ -14,8 +14,16 @@ def create_app():
         "mysql+pymysql://root:@localhost/attandance_management_system"
     )
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    db_connect_args = dict(connect_args())
+    if app.config['SQLALCHEMY_DATABASE_URI'].startswith('mysql'):
+        # PyMySQL waits forever on a socket read by default, so a MySQL server that accepts
+        # the connection and then stalls would hang the request and every request queued
+        # behind it. Fail fast; pool_pre_ping then hands out a fresh connection next time.
+        db_connect_args.setdefault('connect_timeout', int(os.environ.get('DB_CONNECT_TIMEOUT', '10')))
+        db_connect_args.setdefault('read_timeout', int(os.environ.get('DB_READ_TIMEOUT', '30')))
+        db_connect_args.setdefault('write_timeout', int(os.environ.get('DB_WRITE_TIMEOUT', '30')))
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-        'connect_args': connect_args(),
+        'connect_args': db_connect_args,
         # The database is a separate container that can restart under us; without this
         # the first query on a stale pooled connection fails instead of reconnecting.
         'pool_pre_ping': True,
