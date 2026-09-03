@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 # Wait for the database before starting (create_all runs at import time)
 python - <<'EOF'
 import os, time, sys
@@ -19,4 +20,7 @@ print("[ENTRYPOINT] Database never became reachable.", file=sys.stderr)
 sys.exit(1)
 EOF
 
-exec gunicorn -w 2 -b 0.0.0.0:5000 --timeout 300 app:app
+# Each worker loads its own copy of the InsightFace model, so worker count drives
+# memory use more than anything else here. Default to one; raise WEB_CONCURRENCY
+# only on a host with headroom to spare.
+exec gunicorn -w "${WEB_CONCURRENCY:-1}" -b 0.0.0.0:5000 --timeout 300 app:app

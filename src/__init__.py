@@ -39,6 +39,21 @@ def create_app():
     app.register_blueprint(plant_bp, url_prefix='/api/plants')
     app.register_blueprint(shift_bp, url_prefix='/api/shifts')
 
+    @app.route('/')
+    def root():
+        """Every route lives under /api, so without this the container answers 404 at '/'
+        and a reverse-proxy health check marks it unhealthy and drops it from the pool."""
+        return {'service': 'attendance-api', 'status': 'ok'}
+
+    @app.route('/api/health')
+    def health():
+        """Unauthenticated liveness probe — confirms the API and its database are up."""
+        try:
+            db.session.execute(db.text('SELECT 1'))
+            return {'status': 'ok', 'database': 'connected'}
+        except Exception as exc:
+            return {'status': 'degraded', 'database': str(exc)}, 503
+
     with app.app_context():
         db.create_all()
         _seed_initial_data()
