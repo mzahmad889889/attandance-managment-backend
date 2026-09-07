@@ -43,3 +43,13 @@ def update_plant(plant_id):
     p.capacity = data.get('capacity', p.capacity)
     db.session.commit()
     return jsonify({'plant': p.to_dict()}), 200
+
+
+@plant_bp.route('/<int:plant_id>', methods=['DELETE'])
+@jwt_required()
+def delete_plant(plant_id):
+    p = Plant.query.get_or_404(plant_id)
+    # soft-delete if you prefer; here we fully delete
+    db.session.delete(p)
+    db.session.commit()
+    return jsonify({'message': 'Plant deleted'}), 200

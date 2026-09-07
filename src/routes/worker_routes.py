@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, current_app
 from flask_jwt_extended import jwt_required
 from src.extention import db
 from src.models.worker_model import Worker
@@ -67,6 +67,13 @@ def get_worker(worker_id):
 def create_worker():
     data = request.get_json()
 
+    # Log incoming payload for debugging shift assignment issues
+    try:
+        current_app.logger.info(f"Create worker payload: {data}")
+    except Exception:
+        # If current_app logger isn't available for some reason, ignore logging
+        pass
+
     # Auto-generate worker code if not provided
     worker_code = data.get('worker_code') or _next_worker_code()
     if Worker.query.filter_by(worker_code=worker_code).first():
@@ -77,13 +84,26 @@ def create_worker():
     if not plant or not contractor:
         return jsonify({'error': 'Invalid plant or contractor'}), 400
 
+    # Determine shift assignment explicitly:
+    # - If the key 'shift_type' is present in payload, use its value (even if None) => explicit nil
+    # - If absent, fall back to system default 'Day'
+    if 'shift_type' in data:
+        chosen_shift = data['shift_type']  # may be None
+    else:
+        chosen_shift = 'Day'
+
+    try:
+        current_app.logger.info(f"Assigned shift (after interpret): {chosen_shift}")
+    except Exception:
+        pass
+
     w = Worker(
         worker_code=worker_code,
         name=data.get('name', ''),
         age=data.get('age'),
         cnic=data.get('cnic'),
         phone=data.get('phone'),
-        shift_type=data.get('shift_type', 'Day'),
+        shift_type=chosen_shift,
         plant_id=plant.id,
         contractor_id=contractor.id,
     )
@@ -104,6 +124,19 @@ def create_worker():
 
     db.session.add(w)
     db.session.commit()
+
+    # Ensure explicit nil (None) is persisted as NULL in the DB.
+    # Some SQLAlchemy Enum/ORM defaults can coerce or apply defaults on insert; when the client
+    # explicitly requested null, run an explicit UPDATE to set the column to NULL.
+    if 'shift_type' in data and data['shift_type'] is None:
+        try:
+            from sqlalchemy import text
+            db.session.execute(text("UPDATE workers SET shift_type = NULL WHERE id = :id"), {'id': w.id})
+            db.session.commit()
+        except Exception:
+            # best-effort - ignore failures here but continue returning created worker
+            pass
+
     return jsonify({'worker': w.to_dict()}), 201
 
 
@@ -117,7 +150,11 @@ def update_worker(worker_id):
     w.age = data.get('age', w.age)
     w.cnic = data.get('cnic', w.cnic)
     w.phone = data.get('phone', w.phone)
-    w.shift_type = data.get('shift_type', w.shift_type)
+
+    # Track whether shift_type key was present to handle explicit nulls
+    shift_present = 'shift_type' in data
+    if shift_present:
+        w.shift_type = data.get('shift_type')
 
     if data.get('plant_id'):
         w.plant_id = data['plant_id']
@@ -138,6 +175,16 @@ def update_worker(worker_id):
             pass
 
     db.session.commit()
+
+    # If client explicitly sent null for shift_type, ensure NULL is persisted in DB
+    if shift_present and data.get('shift_type') is None:
+        try:
+            from sqlalchemy import text
+            db.session.execute(text("UPDATE workers SET shift_type = NULL WHERE id = :id"), {'id': w.id})
+            db.session.commit()
+        except Exception:
+            pass
+
     return jsonify({'worker': w.to_dict()}), 200
 
 

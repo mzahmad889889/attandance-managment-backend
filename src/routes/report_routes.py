@@ -4,6 +4,7 @@ from src.models.attendance_model import AttendanceRecord
 from src.models.worker_model import Worker
 from src.models.plant_model import Plant
 from src.models.contractor_model import Contractor
+from sqlalchemy import or_
 from datetime import date, datetime, timedelta
 import io, os
 
@@ -25,6 +26,7 @@ def export_excel():
     date_to_str = request.args.get('date_to')
     plant_id = request.args.get('plant_id', type=int)
     contractor_id = request.args.get('contractor_id', type=int)
+    shift = request.args.get('shift')
 
     # Default: current month
     today = date.today()
@@ -45,34 +47,51 @@ def export_excel():
         date_to = today
 
     q = AttendanceRecord.query.join(Worker).filter(
-        AttendanceRecord.date >= date_from,
         AttendanceRecord.date <= date_to,
+        or_(AttendanceRecord.checkout_date.is_(None), AttendanceRecord.checkout_date >= date_from),
         Worker.is_active == True,
     )
     if plant_id:
         q = q.filter(Worker.plant_id == plant_id)
     if contractor_id:
         q = q.filter(Worker.contractor_id == contractor_id)
+    if shift:
+        q = q.filter(AttendanceRecord.shift_type == shift)
 
-    records = q.order_by(AttendanceRecord.date, Worker.name).all()
+    records = q.order_by(AttendanceRecord.date, Worker.name, AttendanceRecord.id).all()
 
     rows = []
+    grouped_records = {}
     for r in records:
-        w = r.worker
-        rows.append({
-            'Date': r.date.isoformat() if r.date else '',
-            'Worker Code': w.worker_code if w else '',
-            'Name': w.name if w else '',
-            'Plant': w.plant.name if w and w.plant else '',
-            'Contractor': w.contractor.name if w and w.contractor else '',
-            'Shift': r.shift_type or '',
-            'Check In': r.checkin_time.strftime('%H:%M') if r.checkin_time else '',
-            'Check Out': r.checkout_time.strftime('%H:%M') if r.checkout_time else '',
-            'Total Hours': r.total_hours or 0,
-            'Overtime Hours': r.overtime_hours or 0,
-            'Status': r.status or '',
-            'Live Status': r.live_status or '',
-        })
+        key = (r.worker_id, r.date.isoformat() if r.date else '')
+        grouped_records.setdefault(key, []).append(r)
+
+    for key, grouped in grouped_records.items():
+        worker_id, date_key = key
+        for entry_no, r in enumerate(grouped, start=1):
+            w = r.worker
+            if r.checkin_time and (r.checkout_time or r.live_status == 'IN'):
+                r.calculate_hours()
+            rows.append({
+                'Entry #': entry_no,
+                'Worker Code': w.worker_code if w else '',
+                'Name': w.name if w else '',
+                'Plant': w.plant.name if w and w.plant else '',
+                'Contractor': w.contractor.name if w and w.contractor else '',
+                'Shift': r.shift_type or '',
+                # 'Date': r.date.isoformat() if r.date else '',
+                'Check In Date': r.date.isoformat() if r.date else '',
+                'Check Out Date': r.checkout_date.isoformat() if r.checkout_date else (
+                    r.date.isoformat() if r.checkout_time and r.date else ''
+                ),
+                'Check In Time': r.checkin_time.strftime('%H:%M') if r.checkin_time else '',
+                'Check Out Time': r.checkout_time.strftime('%H:%M') if r.checkout_time else '',
+                'Total Working Hours': r.total_hours or 0,
+                'Overtime Hours': r.overtime_hours or 0,
+                'Overtime Minutes': r.overtime_minutes,
+                'Status': r.status or '',
+                'Live Status': r.live_status or '',
+            })
 
     df = pd.DataFrame(rows)
 
@@ -141,12 +160,14 @@ def summary():
 
     # Monthly overtime
     month_start = date(today.year, today.month, 1)
-    monthly_ot = AttendanceRecord.query.filter(
+    monthly_records = AttendanceRecord.query.filter(
         AttendanceRecord.date >= month_start,
         AttendanceRecord.date <= today
-    ).with_entities(
-        db.func.sum(AttendanceRecord.overtime_hours)
-    ).scalar() or 0
+    ).all()
+    for record in monthly_records:
+        if record.checkin_time and (record.checkout_time or record.live_status == 'IN'):
+            record.calculate_hours()
+    monthly_ot = sum(record.overtime_hours or 0 for record in monthly_records)
 
     return jsonify({
         'chart_data': chart_data,
@@ -158,12 +179,22 @@ def summary():
 @report_bp.route('/worker/<int:worker_id>/history', methods=['GET'])
 @jwt_required()
 def worker_history(worker_id):
-    """Fetch 1 month history for a specific worker."""
-    limit = date.today() - timedelta(days=30)
-    records = AttendanceRecord.query.filter(
-        AttendanceRecord.worker_id == worker_id,
-        AttendanceRecord.date >= limit
-    ).order_by(AttendanceRecord.date.desc()).all()
+    """Fetch worker history. By default last 30 days; pass ?all=1 to fetch entire history.
+    Optionally pass days=<n> to fetch last n days."""
+    all_flag = request.args.get('all')
+    days_param = request.args.get('days', type=int)
+
+    if all_flag and all_flag.lower() in ('1','true','yes'):
+        records = AttendanceRecord.query.filter(AttendanceRecord.worker_id == worker_id).order_by(AttendanceRecord.date.desc()).all()
+    else:
+        if days_param and days_param > 0:
+            limit = date.today() - timedelta(days=days_param)
+        else:
+            limit = date.today() - timedelta(days=30)
+        records = AttendanceRecord.query.filter(
+            AttendanceRecord.worker_id == worker_id,
+            AttendanceRecord.date >= limit
+        ).order_by(AttendanceRecord.date.desc()).all()
     
     return jsonify({
         'history': [r.to_dict() for r in records]
@@ -184,17 +215,26 @@ def export_worker_excel(worker_id):
     records = AttendanceRecord.query.filter(
         AttendanceRecord.worker_id == worker_id,
         AttendanceRecord.date >= limit
-    ).order_by(AttendanceRecord.date.asc()).all()
+    ).order_by(AttendanceRecord.date.asc(), AttendanceRecord.id.asc()).all()
     
     rows = []
-    for r in records:
+    # Add an entry counter to show repeated entries clearly
+    for idx, r in enumerate(records, start=1):
+        if r.checkin_time and (r.checkout_time or r.live_status == 'IN'):
+            r.calculate_hours()
         rows.append({
+            'Entry #': idx,
             'Date': r.date.isoformat(),
+            'Check In Date': r.date.isoformat(),
+            'Check Out Date': r.checkout_date.isoformat() if r.checkout_date else (
+                r.date.isoformat() if r.checkout_time and r.date else ''
+            ),
             'Shift': r.shift_type,
             'In': r.checkin_time.strftime('%H:%M') if r.checkin_time else '',
             'Out': r.checkout_time.strftime('%H:%M') if r.checkout_time else '',
             'Total Hrs': r.total_hours,
             'OT Hrs': r.overtime_hours,
+            'OT Minutes': r.overtime_minutes,
             'Status': r.status
         })
     
