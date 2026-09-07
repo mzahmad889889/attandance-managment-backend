@@ -3,6 +3,7 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from src.extention import db
 from src.db_ssl import connect_args
+from sqlalchemy import inspect, text
 import os
 
 def create_app():
@@ -90,7 +91,7 @@ def create_app():
 
 
 def _init_database(app):
-    """Create tables and seed reference data, recording failure instead of raising.
+    """Create tables, migrate, and seed reference data, recording failure instead of raising.
 
     Letting this raise would abort the import and take down the whole container, so
     an unreachable database becomes an unreachable API and the real error is visible
@@ -99,6 +100,7 @@ def _init_database(app):
     """
     try:
         db.create_all()
+        _ensure_attendance_checkout_date()
         _seed_initial_data()
         app.config['DB_INIT_ERROR'] = None
     except Exception as exc:
@@ -107,11 +109,19 @@ def _init_database(app):
         db.session.rollback()
 
 
+def _ensure_attendance_checkout_date():
+    """Add the checkout date to existing installations created before it existed."""
+    if 'checkout_date' not in {column['name'] for column in inspect(db.engine).get_columns('attendance')}:
+        db.session.execute(text('ALTER TABLE attendance ADD COLUMN checkout_date DATE NULL'))
+        db.session.commit()
+
+
 def _seed_initial_data():
     """Seed initial admin user and reference data."""
     from src.models.user_model import User
     from src.models.plant_model import Plant
     from src.models.contractor_model import Contractor
+    from src.models.worker_model import Worker
     import bcrypt
 
     # Seed admin
@@ -120,10 +130,29 @@ def _seed_initial_data():
         admin = User(email='admin@system.com', password=hashed, role='admin', name='System Admin')
         db.session.add(admin)
 
-    # Seed contractors (Fawad and Zaman)
-    for name in ['Fawad', 'Zaman']:
-        if not Contractor.query.filter_by(name=name).first():
-            db.session.add(Contractor(name=name))
+    # Consolidate legacy and previously seeded aliases without losing workers.
+    contractor_names = {
+        'Fawad Ali': ['Fawad', 'fawad ali'],
+        'Muhammad Zaman': ['Zaman', 'muhammad zama'],
+    }
+    for canonical_name, aliases in contractor_names.items():
+        candidates = Contractor.query.filter(
+            Contractor.name.in_([canonical_name, *aliases])
+        ).order_by(Contractor.id).all()
+        canonical = next((c for c in candidates if c.name == canonical_name), None)
+        if canonical is None:
+            canonical = candidates[0] if candidates else Contractor(name=canonical_name)
+            if canonical not in candidates:
+                db.session.add(canonical)
+        canonical.name = canonical_name
+
+        for duplicate in candidates:
+            if duplicate.id == canonical.id:
+                continue
+            Worker.query.filter_by(contractor_id=duplicate.id).update(
+                {'contractor_id': canonical.id}, synchronize_session=False
+            )
+            db.session.delete(duplicate)
 
     # Seed 4 plants
     plant_names = ['Plant A', 'Plant B', 'Plant C', 'Plant D']

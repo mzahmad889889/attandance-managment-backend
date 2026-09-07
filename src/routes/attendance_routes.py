@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required
 from src.extention import db
 from src.models.attendance_model import AttendanceRecord
 from src.models.worker_model import Worker
+from sqlalchemy import or_
 from datetime import date, datetime, time
 
 attendance_bp = Blueprint('attendance', __name__)
@@ -14,6 +15,8 @@ def list_attendance():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 50, type=int)
     date_str = request.args.get('date')
+    date_from_str = request.args.get('date_from')
+    date_to_str = request.args.get('date_to')
     plant_id = request.args.get('plant_id', type=int)
     contractor_id = request.args.get('contractor_id', type=int)
     shift = request.args.get('shift')
@@ -22,14 +25,22 @@ def list_attendance():
 
     q = AttendanceRecord.query.join(Worker)
 
-    if date_str:
+    if date_from_str or date_to_str:
         try:
-            d = date.fromisoformat(date_str)
-            q = q.filter(AttendanceRecord.date == d)
+            date_from = date.fromisoformat(date_from_str) if date_from_str else date.min
+            date_to = date.fromisoformat(date_to_str) if date_to_str else date.max
+            q = q.filter(
+                AttendanceRecord.date <= date_to,
+                or_(AttendanceRecord.checkout_date.is_(None), AttendanceRecord.checkout_date >= date_from),
+            )
         except ValueError:
             pass
-    else:
-        q = q.filter(AttendanceRecord.date == date.today())
+    elif date_str:
+        try:
+            d = date.fromisoformat(date_str)
+            q = q.filter(or_(AttendanceRecord.date == d, AttendanceRecord.checkout_date == d))
+        except ValueError:
+            pass
 
     if plant_id:
         q = q.filter(Worker.plant_id == plant_id)
@@ -61,6 +72,9 @@ def today_stats():
     records_today = AttendanceRecord.query.filter_by(date=today).all()
     present = sum(1 for r in records_today if r.status in ('Present', 'Late'))
     live_in = sum(1 for r in records_today if r.live_status == 'IN')
+    for record in records_today:
+        if record.checkin_time and (record.checkout_time or record.live_status == 'IN'):
+            record.calculate_hours()
     overtime = sum(r.overtime_hours or 0 for r in records_today)
 
     return jsonify({
@@ -84,27 +98,25 @@ def manual_checkin():
     if not worker:
         return jsonify({'error': 'Worker not found'}), 404
 
-    today = date.today()
-    record = AttendanceRecord.query.filter_by(worker_id=worker.id, date=today).order_by(AttendanceRecord.id.desc()).first()
+    # Lock the worker row so concurrent camera/manual requests cannot create
+    # multiple open attendance records for the same worker.
+    worker = Worker.query.filter_by(id=worker.id).with_for_update().first()
+    record = AttendanceRecord.query.filter_by(worker_id=worker.id, live_status='IN').order_by(AttendanceRecord.id.asc()).first()
 
-    if record and record.live_status == 'IN':
+    if record:
         return jsonify({'error': 'Already checked in', 'record': record.to_dict()}), 409
 
+    today = date.today()
     now = datetime.now().time()
-    if not record or record.live_status == 'OUT':
-        record = AttendanceRecord(
-            worker_id=worker.id,
-            date=today,
-            shift_type=worker.shift_type,
-            checkin_time=now,
-            live_status='IN',
-            status='Present',
-        )
-        db.session.add(record)
-    else:
-        # Re check-in after check-out (shouldn't normally happen but handle gracefully)
-        record.checkin_time = now
-        record.live_status = 'IN'
+    record = AttendanceRecord(
+        worker_id=worker.id,
+        date=today,
+        shift_type=worker.shift_type,
+        checkin_time=now,
+        live_status='IN',
+        status='Present',
+    )
+    db.session.add(record)
 
     db.session.commit()
     
@@ -125,14 +137,15 @@ def manual_checkout():
     if not worker:
         return jsonify({'error': 'Worker not found'}), 404
 
-    today = date.today()
-    record = AttendanceRecord.query.filter_by(worker_id=worker.id, date=today, live_status='IN').order_by(AttendanceRecord.id.desc()).first()
+    worker = Worker.query.filter_by(id=worker.id).with_for_update().first()
+    record = AttendanceRecord.query.filter_by(worker_id=worker.id, live_status='IN').order_by(AttendanceRecord.id.asc()).first()
 
     if not record:
         return jsonify({'error': 'Worker not checked in'}), 409
 
     now = datetime.now().time()
     record.checkout_time = now
+    record.checkout_date = today
     record.live_status = 'OUT'
     record.calculate_hours()
 
@@ -155,7 +168,7 @@ def live_feed():
 def monitoring_active():
     """Returns all workers currently 'IN', grouped by plant."""
     today = date.today()
-    active_now = AttendanceRecord.query.filter_by(date=today, live_status='IN').all()
+    active_now = AttendanceRecord.query.filter_by(live_status='IN').all()
     
     plants = {}
     for r in active_now:

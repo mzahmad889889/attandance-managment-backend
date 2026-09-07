@@ -247,8 +247,11 @@ def recognize():
     now_time = datetime.now().time()
 
     if mode == 'checkin':
-        record = AttendanceRecord.query.filter_by(worker_id=best_worker.id, date=today).order_by(AttendanceRecord.id.desc()).first()
-        if record and record.live_status == 'IN':
+        # Lock the worker row so repeated live scans cannot create duplicate
+        # open records for the same worker.
+        best_worker = Worker.query.filter_by(id=best_worker.id).with_for_update().first()
+        record = AttendanceRecord.query.filter_by(worker_id=best_worker.id, live_status='IN').order_by(AttendanceRecord.id.asc()).first()
+        if record:
             return jsonify({
                 'match': True,
                 'already_checked_in': True,
@@ -269,7 +272,8 @@ def recognize():
         db.session.add(record)
 
     elif mode == 'checkout':
-        record = AttendanceRecord.query.filter_by(worker_id=best_worker.id, date=today, live_status='IN').order_by(AttendanceRecord.id.desc()).first()
+        best_worker = Worker.query.filter_by(id=best_worker.id).with_for_update().first()
+        record = AttendanceRecord.query.filter_by(worker_id=best_worker.id, live_status='IN').order_by(AttendanceRecord.id.asc()).first()
         if not record:
             return jsonify({
                 'match': True,
@@ -279,6 +283,7 @@ def recognize():
             }), 200
 
         record.checkout_time = now_time
+        record.checkout_date = today
         record.checkout_photo = snapshot_path
         record.live_status = 'OUT'
         record.calculate_hours()

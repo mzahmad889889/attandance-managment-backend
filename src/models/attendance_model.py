@@ -1,6 +1,5 @@
 from src.extention import db
 from datetime import datetime, date, time
-import math
 
 class AttendanceRecord(db.Model):
     __tablename__ = 'attendance'
@@ -8,6 +7,7 @@ class AttendanceRecord(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.Integer, db.ForeignKey('workers.id'), nullable=False)
     date = db.Column(db.Date, nullable=False, default=date.today)
+    checkout_date = db.Column(db.Date)
 
     shift_type = db.Column(db.Enum('Day', 'Night', 'Rest'), nullable=False)
     checkin_time = db.Column(db.Time)
@@ -24,34 +24,34 @@ class AttendanceRecord(db.Model):
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    def calculate_hours(self):
-        """Calculate total and overtime hours based on shift (12hr shifts: Day 07:00-19:00, Night 19:00-07:00).
+    def calculate_hours(self, reference_time=None):
+        """Calculate elapsed and overtime, using 8 hours as the standard day."""
+        if not self.checkin_time:
+            return
 
-        Overtime rounding policy:
-        - If overtime < 0.5 hours (30 minutes) => count as 0
-        - If overtime >= 0.5 hours => round up to the next whole hour (ceil)
-        """
-        if self.checkin_time and self.checkout_time:
-            from datetime import datetime, timedelta
-            # Convert times to datetime for arithmetic
-            base = datetime(2000, 1, 1)
-            cin = datetime.combine(base.date(), self.checkin_time)
-            cout = datetime.combine(base.date(), self.checkout_time)
-            if cout < cin:
-                cout += timedelta(days=1)  # overnight shift
-            total = (cout - cin).total_seconds() / 3600
-            self.total_hours = round(total, 2)
+        from datetime import timedelta
+        start_date = self.date or date.today()
+        cin = datetime.combine(start_date, self.checkin_time)
+        if self.checkout_time:
+            end_date = self.checkout_date or start_date
+            cout = datetime.combine(end_date, self.checkout_time)
+        else:
+            cout = reference_time or datetime.now()
+        if cout < cin:
+            cout += timedelta(days=1)
 
-            # Shift duration is 12 hours standard
-            standard_hours = 12.0
-            raw_overtime = max(0.0, total - standard_hours)
-            # Apply rounding policy: <0.5h -> 0, otherwise ceil to next hour
-            if raw_overtime < 0.5:
-                self.overtime_hours = 0
-            else:
-                self.overtime_hours = int(math.ceil(raw_overtime))
+        total_minutes = max(0, round((cout - cin).total_seconds() / 60))
+        overtime_minutes = max(0, total_minutes - 8 * 60)
+        self.total_hours = round(total_minutes / 60, 2)
+        self.overtime_hours = round(overtime_minutes / 60, 2)
+
+    @property
+    def overtime_minutes(self):
+        return round((self.overtime_hours or 0) * 60)
 
     def to_dict(self):
+        if self.checkin_time and (self.checkout_time or self.live_status == 'IN'):
+            self.calculate_hours()
         w = self.worker
         return {
             'id': self.id,
@@ -61,11 +61,16 @@ class AttendanceRecord(db.Model):
             'plant_name': w.plant.name if w and w.plant else None,
             'contractor_name': w.contractor.name if w and w.contractor else None,
             'date': self.date.isoformat() if self.date else None,
+            'checkin_date': self.date.isoformat() if self.date else None,
+            'checkout_date': self.checkout_date.isoformat() if self.checkout_date else (
+                self.date.isoformat() if self.checkout_time and self.date else None
+            ),
             'shift_type': self.shift_type,
             'checkin_time': self.checkin_time.strftime('%H:%M') if self.checkin_time else None,
             'checkout_time': self.checkout_time.strftime('%H:%M') if self.checkout_time else None,
             'total_hours': self.total_hours,
             'overtime_hours': self.overtime_hours,
+            'overtime_minutes': self.overtime_minutes,
             'live_status': self.live_status,
             'status': self.status,
             'photo_url': f'/api/attendance/{self.id}/checkin-photo' if self.checkin_photo else None,

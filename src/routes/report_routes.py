@@ -4,6 +4,7 @@ from src.models.attendance_model import AttendanceRecord
 from src.models.worker_model import Worker
 from src.models.plant_model import Plant
 from src.models.contractor_model import Contractor
+from sqlalchemy import or_
 from datetime import date, datetime, timedelta
 import io, os
 
@@ -46,8 +47,8 @@ def export_excel():
         date_to = today
 
     q = AttendanceRecord.query.join(Worker).filter(
-        AttendanceRecord.date >= date_from,
         AttendanceRecord.date <= date_to,
+        or_(AttendanceRecord.checkout_date.is_(None), AttendanceRecord.checkout_date >= date_from),
         Worker.is_active == True,
     )
     if plant_id:
@@ -69,18 +70,25 @@ def export_excel():
         worker_id, date_key = key
         for entry_no, r in enumerate(grouped, start=1):
             w = r.worker
+            if r.checkin_time and (r.checkout_time or r.live_status == 'IN'):
+                r.calculate_hours()
             rows.append({
                 'Entry #': entry_no,
-                'Date': r.date.isoformat() if r.date else '',
                 'Worker Code': w.worker_code if w else '',
                 'Name': w.name if w else '',
                 'Plant': w.plant.name if w and w.plant else '',
                 'Contractor': w.contractor.name if w and w.contractor else '',
                 'Shift': r.shift_type or '',
-                'Check In': r.checkin_time.strftime('%H:%M') if r.checkin_time else '',
-                'Check Out': r.checkout_time.strftime('%H:%M') if r.checkout_time else '',
-                'Total Hours': r.total_hours or 0,
+                # 'Date': r.date.isoformat() if r.date else '',
+                'Check In Date': r.date.isoformat() if r.date else '',
+                'Check Out Date': r.checkout_date.isoformat() if r.checkout_date else (
+                    r.date.isoformat() if r.checkout_time and r.date else ''
+                ),
+                'Check In Time': r.checkin_time.strftime('%H:%M') if r.checkin_time else '',
+                'Check Out Time': r.checkout_time.strftime('%H:%M') if r.checkout_time else '',
+                'Total Working Hours': r.total_hours or 0,
                 'Overtime Hours': r.overtime_hours or 0,
+                'Overtime Minutes': r.overtime_minutes,
                 'Status': r.status or '',
                 'Live Status': r.live_status or '',
             })
@@ -152,12 +160,14 @@ def summary():
 
     # Monthly overtime
     month_start = date(today.year, today.month, 1)
-    monthly_ot = AttendanceRecord.query.filter(
+    monthly_records = AttendanceRecord.query.filter(
         AttendanceRecord.date >= month_start,
         AttendanceRecord.date <= today
-    ).with_entities(
-        db.func.sum(AttendanceRecord.overtime_hours)
-    ).scalar() or 0
+    ).all()
+    for record in monthly_records:
+        if record.checkin_time and (record.checkout_time or record.live_status == 'IN'):
+            record.calculate_hours()
+    monthly_ot = sum(record.overtime_hours or 0 for record in monthly_records)
 
     return jsonify({
         'chart_data': chart_data,
@@ -210,14 +220,21 @@ def export_worker_excel(worker_id):
     rows = []
     # Add an entry counter to show repeated entries clearly
     for idx, r in enumerate(records, start=1):
+        if r.checkin_time and (r.checkout_time or r.live_status == 'IN'):
+            r.calculate_hours()
         rows.append({
             'Entry #': idx,
             'Date': r.date.isoformat(),
+            'Check In Date': r.date.isoformat(),
+            'Check Out Date': r.checkout_date.isoformat() if r.checkout_date else (
+                r.date.isoformat() if r.checkout_time and r.date else ''
+            ),
             'Shift': r.shift_type,
             'In': r.checkin_time.strftime('%H:%M') if r.checkin_time else '',
             'Out': r.checkout_time.strftime('%H:%M') if r.checkout_time else '',
             'Total Hrs': r.total_hours,
             'OT Hrs': r.overtime_hours,
+            'OT Minutes': r.overtime_minutes,
             'Status': r.status
         })
     
