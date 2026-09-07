@@ -1,5 +1,6 @@
 from src.extention import db
 from datetime import datetime, date, time
+from src.apptime import now as app_now, today as app_today
 
 class AttendanceRecord(db.Model):
     __tablename__ = 'attendance'
@@ -22,7 +23,7 @@ class AttendanceRecord(db.Model):
     live_status = db.Column(db.Enum('IN', 'OUT'), default='OUT')
     status = db.Column(db.Enum('Present', 'Late', 'Absent', 'On Leave'), default='Absent')
 
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=app_now)
 
     def calculate_hours(self, reference_time=None):
         """Calculate elapsed and overtime, using 8 hours as the standard day."""
@@ -30,13 +31,13 @@ class AttendanceRecord(db.Model):
             return
 
         from datetime import timedelta
-        start_date = self.date or date.today()
+        start_date = self.date or app_today()
         cin = datetime.combine(start_date, self.checkin_time)
         if self.checkout_time:
             end_date = self.checkout_date or start_date
             cout = datetime.combine(end_date, self.checkout_time)
         else:
-            cout = reference_time or datetime.now()
+            cout = reference_time or app_now()
         if cout < cin:
             cout += timedelta(days=1)
 

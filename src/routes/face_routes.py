@@ -10,6 +10,7 @@ from src.models.attendance_model import AttendanceRecord
 import os, base64, json, threading
 import numpy as np
 from datetime import date, datetime
+from src.apptime import now as app_now, today as app_today
 
 face_bp = Blueprint('face', __name__)
 
@@ -235,7 +236,7 @@ def recognize():
     snapshot_path = None
     try:
         import cv2
-        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        ts = app_now().strftime('%Y%m%d_%H%M%S')
         snap_name = f'{best_worker.worker_code}_{ts}.jpg'
         snapshot_path = os.path.join(SNAPSHOT_DIR, snap_name)
         cv2.imwrite(snapshot_path, img_np)
@@ -243,8 +244,8 @@ def recognize():
         pass
 
     # Create/Update attendance record
-    today = date.today()
-    now_time = datetime.now().time()
+    today = app_today()
+    now_time = app_now().time()
 
     if mode == 'checkin':
         # Lock the worker row so repeated live scans cannot create duplicate

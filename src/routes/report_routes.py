@@ -7,6 +7,7 @@ from src.models.contractor_model import Contractor
 from sqlalchemy import or_
 from datetime import date, datetime, timedelta
 import io, os
+from src.apptime import now as app_now, today as app_today
 
 report_bp = Blueprint('reports', __name__)
 
@@ -29,7 +30,7 @@ def export_excel():
     shift = request.args.get('shift')
 
     # Default: current month
-    today = date.today()
+    today = app_today()
     if date_from_str:
         try:
             date_from = date.fromisoformat(date_from_str)
@@ -124,7 +125,7 @@ def export_excel():
 @jwt_required()
 def summary():
     """Weekly and monthly summary stats."""
-    today = date.today()
+    today = app_today()
     week_start = today - timedelta(days=today.weekday())
 
     # Last 7 days chart data
@@ -188,9 +189,9 @@ def worker_history(worker_id):
         records = AttendanceRecord.query.filter(AttendanceRecord.worker_id == worker_id).order_by(AttendanceRecord.date.desc()).all()
     else:
         if days_param and days_param > 0:
-            limit = date.today() - timedelta(days=days_param)
+            limit = app_today() - timedelta(days=days_param)
         else:
-            limit = date.today() - timedelta(days=30)
+            limit = app_today() - timedelta(days=30)
         records = AttendanceRecord.query.filter(
             AttendanceRecord.worker_id == worker_id,
             AttendanceRecord.date >= limit
@@ -211,7 +212,7 @@ def export_worker_excel(worker_id):
         return jsonify({'error': 'pandas not installed'}), 503
         
     worker = Worker.query.get_or_404(worker_id)
-    limit = date.today() - timedelta(days=30)
+    limit = app_today() - timedelta(days=30)
     records = AttendanceRecord.query.filter(
         AttendanceRecord.worker_id == worker_id,
         AttendanceRecord.date >= limit
@@ -248,7 +249,7 @@ def export_worker_excel(worker_id):
         buf,
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         as_attachment=True,
-        download_name=f'History_{worker.worker_code}_{date.today()}.xlsx'
+        download_name=f'History_{worker.worker_code}_{app_today()}.xlsx'
     )
 
 

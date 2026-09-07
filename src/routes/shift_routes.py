@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required
 from src.models.worker_model import Worker
 from src.models.attendance_model import AttendanceRecord
 from datetime import date, datetime, timedelta
+from src.apptime import now as app_now, today as app_today
 
 shift_bp = Blueprint('shifts', __name__)
 
@@ -13,7 +14,7 @@ SHIFT_CYCLE = ['Day', 'Day', 'Night', 'Night', 'Rest', 'Rest']
 def get_shift_for_worker(worker, target_date=None):
     """Calculate what shift a worker should be on for a given date based on start date."""
     if target_date is None:
-        target_date = date.today()
+        target_date = app_today()
     if not worker.shift_start_date:
         return worker.shift_type
 
@@ -27,7 +28,7 @@ def get_shift_for_worker(worker, target_date=None):
 def schedule():
     """Return 7-day shift schedule for all workers (paginated per plant)."""
     plant_id = request.args.get('plant_id', type=int)
-    today = date.today()
+    today = app_today()
     days = [(today + timedelta(days=i)) for i in range(7)]
 
     q = Worker.query.filter_by(is_active=True)
@@ -59,7 +60,7 @@ def schedule():
 @shift_bp.route('/summary', methods=['GET'])
 @jwt_required()
 def today_shift_summary():
-    today = date.today()
+    today = app_today()
     workers = Worker.query.filter_by(is_active=True).all()
 
     day_workers, night_workers, rest_workers = [], [], []

@@ -1,5 +1,6 @@
 from src.extention import db
 from datetime import datetime
+from src.apptime import now as app_now, today as app_today
 
 class Plant(db.Model):
     __tablename__ = 'plants'
@@ -7,7 +8,7 @@ class Plant(db.Model):
     name = db.Column(db.String(100), nullable=False, unique=True)
     location = db.Column(db.String(200))
     capacity = db.Column(db.Integer, default=90)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=app_now)
 
     workers = db.relationship('Worker', backref='plant', lazy=True)
 

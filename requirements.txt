@@ -26,3 +26,5 @@ Pillow
 # Misc
 requests
 python-dateutil
+# zoneinfo needs a tz database; the slim base image does not ship one
+tzdata

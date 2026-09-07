@@ -5,6 +5,7 @@ from src.models.attendance_model import AttendanceRecord
 from src.models.worker_model import Worker
 from sqlalchemy import or_
 from datetime import date, datetime, time
+from src.apptime import now as app_now, today as app_today
 
 attendance_bp = Blueprint('attendance', __name__)
 
@@ -67,7 +68,7 @@ def list_attendance():
 @attendance_bp.route('/today-stats', methods=['GET'])
 @jwt_required()
 def today_stats():
-    today = date.today()
+    today = app_today()
     total_workers = Worker.query.filter_by(is_active=True).count()
     records_today = AttendanceRecord.query.filter_by(date=today).all()
     present = sum(1 for r in records_today if r.status in ('Present', 'Late'))
@@ -106,8 +107,8 @@ def manual_checkin():
     if record:
         return jsonify({'error': 'Already checked in', 'record': record.to_dict()}), 409
 
-    today = date.today()
-    now = datetime.now().time()
+    today = app_today()
+    now = app_now().time()
     record = AttendanceRecord(
         worker_id=worker.id,
         date=today,
@@ -143,7 +144,7 @@ def manual_checkout():
     if not record:
         return jsonify({'error': 'Worker not checked in'}), 409
 
-    now = datetime.now().time()
+    now = app_now().time()
     record.checkout_time = now
     record.checkout_date = today
     record.live_status = 'OUT'
@@ -157,7 +158,7 @@ def manual_checkout():
 @jwt_required()
 def live_feed():
     """Return recent 20 check-in/out events."""
-    records = AttendanceRecord.query.filter_by(date=date.today()).order_by(
+    records = AttendanceRecord.query.filter_by(date=app_today()).order_by(
         AttendanceRecord.id.desc()
     ).limit(20).all()
     return jsonify({'records': [r.to_dict() for r in records]}), 200
@@ -167,7 +168,7 @@ def live_feed():
 @jwt_required()
 def monitoring_active():
     """Returns all workers currently 'IN', grouped by plant."""
-    today = date.today()
+    today = app_today()
     active_now = AttendanceRecord.query.filter_by(live_status='IN').all()
     
     plants = {}
@@ -189,7 +190,7 @@ def cleanup_old_history():
     """Remove attendance records older than 30 days."""
     try:
         from datetime import date, timedelta
-        limit = date.today() - timedelta(days=30)
+        limit = app_today() - timedelta(days=30)
         deleted = AttendanceRecord.query.filter(AttendanceRecord.date < limit).delete()
         db.session.commit()
         if deleted > 0:

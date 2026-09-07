@@ -1,5 +1,6 @@
 from src.extention import db
 from datetime import datetime
+from src.apptime import now as app_now, today as app_today
 
 class User(db.Model):
     __tablename__ = 'users'
@@ -8,7 +9,7 @@ class User(db.Model):
     password = db.Column(db.String(255), nullable=False)
     role = db.Column(db.Enum('admin', 'manager'), nullable=False, default='manager')
     name = db.Column(db.String(150), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=app_now)
 
     def to_dict(self):
         return {

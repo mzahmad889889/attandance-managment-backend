@@ -1,6 +1,7 @@
 from src.extention import db
 from datetime import datetime
 import json
+from src.apptime import now as app_now, today as app_today
 
 class Worker(db.Model):
     __tablename__ = 'workers'
@@ -21,7 +22,7 @@ class Worker(db.Model):
     contractor_id = db.Column(db.Integer, db.ForeignKey('contractors.id'), nullable=False)
 
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=app_now)
 
     attendance = db.relationship('AttendanceRecord', backref='worker', lazy=True)
 
@@ -54,7 +55,7 @@ class Worker(db.Model):
         if include_today:
             from src.models.attendance_model import AttendanceRecord
             from datetime import date
-            today = date.today()
+            today = app_today()
             att = AttendanceRecord.query.filter_by(worker_id=self.id, date=today).order_by(AttendanceRecord.id.desc()).first()
             if att:
                 d['live_status'] = att.live_status

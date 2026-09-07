@@ -1,11 +1,12 @@
 from src.extention import db
 from datetime import datetime
+from src.apptime import now as app_now, today as app_today
 
 class Contractor(db.Model):
     __tablename__ = 'contractors'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False, unique=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=app_now)
 
     workers = db.relationship('Worker', backref='contractor', lazy=True)
 
